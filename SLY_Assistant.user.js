@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SLY Assistant
 // @namespace    http://tampermonkey.net/
-// @version      0.6.2
+// @version      0.6.4
 // @description  try to take over the world!
 // @author       SLY w/ Contributions by niofox, SkyLove512, anthonyra
 // @match        https://*.based.staratlas.com/
@@ -930,6 +930,7 @@
                 }).compileToV0Message(addressLookupTables);
                 let tx = new solanaWeb3.VersionedTransaction(messageV0);
 				let txSigned = null;
+                cLog(4,`${FleetTimeStamp(fleetName)} <${opName}> tx: `, tx);
 
 				if (typeof solflare === 'undefined') {
 					txSigned = phantom && phantom.solana ? await phantom.solana.signAllTransactions([tx]) : solana.signAllTransactions([tx]);
@@ -938,6 +939,7 @@
 				}
 
 				let txSerialized = await txSigned[0].serialize();
+                cLog(4,`${FleetTimeStamp(fleetName)} <${opName}> txSerialized: `, txSerialized);
 
 				let microOpStart = Date.now();
 				cLog(2,`${FleetTimeStamp(fleetName)} <${opName}> SEND ➡️`);
@@ -1602,23 +1604,23 @@
 			]);
 			let starbasePlayerCargoHold = starbasePlayerCargoHolds[0];
 			let mostFound = 0;
-			for (let cargoHold of starbasePlayerCargoHolds) {
-					if (cargoHold.account && cargoHold.account.openTokenAccounts > 0) {
-							let cargoHoldTokens = await solanaReadConnection.getParsedTokenAccountsByOwner(cargoHold.publicKey, {programId: tokenProgramPK});
-							let cargoHoldFound = cargoHoldTokens.value.find(item => item.account.data.parsed.info.mint === tokenMint && item.account.data.parsed.info.tokenAmount.uiAmount >= amount);
-							if (cargoHoldFound) {
-									starbasePlayerCargoHold = cargoHold;
-									mostFound = cargoHoldFound.account.data.parsed.info.tokenAmount.uiAmount;
-									break;
-							} else {
-									let cargoHoldFound = cargoHoldTokens.value.find(item => item.account.data.parsed.info.mint === tokenMint && item.account.data.parsed.info.tokenAmount.uiAmount >= mostFound);
-									if (cargoHoldFound) {
-											starbasePlayerCargoHold = cargoHold;
-											mostFound = cargoHoldFound.account.data.parsed.info.tokenAmount.uiAmount;
-									}
-							}
-					}
-			}
+            for (let cargoHold of starbasePlayerCargoHolds) {
+                if (cargoHold.account && cargoHold.account.openTokenAccounts > 0) {
+                    let cargoHoldTokens = await solanaReadConnection.getParsedTokenAccountsByOwner(cargoHold.publicKey, {programId: tokenProgramPK});
+                    let cargoHoldFound = cargoHoldTokens.value.find(item => item.account.data.parsed.info.mint === tokenMint && item.account.data.parsed.info.tokenAmount.uiAmount >= amount);
+                    if (cargoHoldFound) {
+                        starbasePlayerCargoHold = cargoHold;
+                        mostFound = cargoHoldFound.account.data.parsed.info.tokenAmount.uiAmount;
+                        break;
+                    } else {
+                        let cargoHoldFound = cargoHoldTokens.value.find(item => item.account.data.parsed.info.mint === tokenMint && item.account.data.parsed.info.tokenAmount.uiAmount >= mostFound);
+                        if (cargoHoldFound) {
+                            starbasePlayerCargoHold = cargoHold;
+                            mostFound = cargoHoldFound.account.data.parsed.info.tokenAmount.uiAmount;
+                        }
+                    }
+                }
+            }
 			amount = amount > mostFound ? mostFound : amount;
 
 			if (amount > 0) {
@@ -1926,7 +1928,6 @@
     async function execStartCrafting(starbase, starbasePlayer, starbasePlayerCargoHoldsAndTokens, craftingRecipe, craftAmount, userCraft) {
         return new Promise(async resolve => {
             let transactions = [];
-            let craftDuration = (craftingRecipe.duration * craftAmount) / userCraft.crew;
 
             let facility = craftRecipes.some(item => item.name === craftingRecipe.name) ? starbase.account.craftingFacility : starbase.account.upgradeFacility;
 
@@ -2063,7 +2064,6 @@
                 transactions.push(tx);
                 }
 
-
             let [signerFeeMintToken] = await BrowserAnchor.anchor.web3.PublicKey.findProgramAddressSync(
                 [
                     userPublicKey.toBuffer(),
@@ -2073,16 +2073,46 @@
                 programPK
             );
 
-            let [craftingAtlasToken] = await BrowserAnchor.anchor.web3.PublicKey.findProgramAddressSync(
-                [
-                    craftingProcess.toBuffer(),
-                    tokenProgramPK.toBuffer(),
-                    sageGameAcct.account.mints.atlas.toBuffer(),
-                ],
-                programPK
-            );
+            let startCraftProcRemainingAccts = [
+                {
+                    pubkey: craftingRecipe.feeRecipient,
+                    isSigner: false,
+                    isWritable: false
+                }, {
+                    pubkey: userPublicKey,
+                    isSigner: true,
+                    isWritable: true
+                }, {
+                    pubkey: signerFeeMintToken,
+                    isSigner: false,
+                    isWritable: true
+                }];
 
-            if (!await getAccountInfo(userCraft.label, 'Crafting atlas token', craftingAtlasToken)) transactions.push(await createPDA(craftingAtlasToken, craftingProcess, sageGameAcct.account.mints.atlas, userCraft, false));
+            if (craftRecipes.some(item => item.name === craftingRecipe.name)) {
+                console.log('HERE');
+                let [craftingAtlasToken] = await BrowserAnchor.anchor.web3.PublicKey.findProgramAddressSync(
+                    [
+                        craftingProcess.toBuffer(),
+                        tokenProgramPK.toBuffer(),
+                        sageGameAcct.account.mints.atlas.toBuffer(),
+                    ],
+                    programPK
+                );
+
+                if (!await getAccountInfo(userCraft.label, 'Crafting atlas token', craftingAtlasToken)) transactions.push(await createPDA(craftingAtlasToken, craftingProcess, sageGameAcct.account.mints.atlas, userCraft, false));
+
+                startCraftProcRemainingAccts.push({
+                    pubkey: craftingAtlasToken,
+                    isSigner: false,
+                    isWritable: true
+                });
+            }
+
+            startCraftProcRemainingAccts.push({
+                pubkey: tokenProgramPK,
+                isSigner: false,
+                isWritable: false
+            });
 
             let tx2 = { instruction: await sageProgram.methods.startCraftingProcess({keyIndex: new BrowserAnchor.anchor.BN(userProfileKeyIdx)}).accountsStrict({
                 starbaseAndStarbasePlayer: {
@@ -2103,34 +2133,11 @@
                     gameState: sageGameAcct.account.gameState
                 },
                 craftingProgram: craftingProgramPK
-                }).remainingAccounts([
-                {
-                    pubkey: craftingRecipe.feeRecipient,
-                    isSigner: false,
-                    isWritable: false
-                }, {
-                    pubkey: userPublicKey,
-                    isSigner: true,
-                    isWritable: true
-                }, {
-                    pubkey: signerFeeMintToken,
-                    isSigner: false,
-                    isWritable: true
-                }, {
-                    pubkey: craftingAtlasToken,
-                    isSigner: false,
-                    isWritable: true
-                }, {
-                    pubkey: tokenProgramPK,
-                    isSigner: false,
-                    isWritable: false
-                }
-            ]).instruction()}
+                }).remainingAccounts(startCraftProcRemainingAccts).instruction()}
             transactions.push(tx2);
 
-            let txResult = await txSignAndSend(transactions, userCraft, 'START CRAFTING');
-            const calcEndTime = Date.now() + craftDuration * 1000;
-            updateFleetState(userCraft, 'Crafting [' + TimeToStr(new Date(calcEndTime)) + ']');
+            let txResult = {craftingId: formattedRandomBytes, result: await txSignAndSend(transactions, userCraft, 'START CRAFTING')};
+
             resolve(txResult);
         });
     }
@@ -2251,8 +2258,8 @@
                 }).instruction()}
                 transactions.push(tx1);
 
-                cLog(1,`${FleetTimeStamp(userCraft.label)} Completing craft (2 transactions)`);
-                let tx1Result = await txSignAndSend(transactions, userCraft, 'COMPLETING CRAFT TX1');
+                //cLog(1,`${FleetTimeStamp(userCraft.label)} Completing craft (2 transactions)`);
+                //let tx1Result = await txSignAndSend(transactions, userCraft, 'COMPLETING CRAFT TX1');
             }
 
             let [craftingAtlasToken] = await BrowserAnchor.anchor.web3.PublicKey.findProgramAddressSync(
@@ -2303,9 +2310,11 @@
                     isWritable: false
                 }
             ]).instruction()}
+            transactions.push(tx2);
 
-            let txResult = await txSignAndSend(tx2, userCraft, 'COMPLETING CRAFT TX2');
-            updateFleetState(userCraft, 'Idle');
+            //let txResult = await txSignAndSend(tx2, userCraft, 'COMPLETING CRAFT TX2');
+            let txResult = await txSignAndSend(transactions, userCraft, 'COMPLETING CRAFT');
+
             resolve(txResult);
         });
     }
@@ -2433,7 +2442,7 @@
             transactions.push(tx2);
 
             let txResult = await txSignAndSend(transactions, userCraft, 'COMPLETING UPGRADE');
-            updateFleetState(userCraft, 'Idle');
+
             resolve(txResult);
         });
     }
@@ -3137,6 +3146,7 @@
             let craftSavedData = await GM.getValue(craftPK, '{}');
             let craftParsedData = craftSavedData && JSON.parse(craftSavedData);
             let craftState = craftParsedData && craftParsedData.state || 'Idle';
+            let craftingId = craftParsedData && craftParsedData.craftingId || 0;
 
             let craft = {
                 label: craftPK,
@@ -3144,7 +3154,8 @@
                 crew: craftCrew,
                 item: craftItem,
                 amount: craftAmount,
-                state: craftState
+                state: craftState,
+                craftingId: craftingId
             }
             console.log('craft: ', craft);
 
@@ -4232,10 +4243,12 @@
                 //Loading at Target
                 if(hasStarbaseManifest) {
                     const loadedCargo = await handleTransportLoading(i, userFleets[i].destCoord, starbaseCargoManifest);
+                    cLog(1,`${FleetTimeStamp(userFleets[i].label)} loadedCargo: `, loadedCargo);
                     if(!loadedCargo && globalSettings.transportStopOnError) {
                         //const newFleetState = `ERROR: No more cargo to load`;
                         //cLog(1,`${FleetTimeStamp(userFleets[i].label)} ${newFleetState}`);
                         //userFleets[i].state = newFleetState;
+                        cLog(1,`${FleetTimeStamp(userFleets[i].label)} ERROR: Unexpected error on cargo load.`);
                         return;
                     }
                 } else cLog(1,`${FleetTimeStamp(userFleets[i].label)} Loading skipped - No resources specified`);
@@ -4243,6 +4256,7 @@
                 await execUndock(userFleets[i], userFleets[i].destCoord);
                 userFleets[i].moveTarget = userFleets[i].starbaseCoord;
                 userFleets[i].resupplying = false;
+                cLog(3,`${FleetTimeStamp(userFleets[i].label)} userFleets[i]: `, userFleets[i]);
             }
 
             if (userFleets[i].moveTarget !== '') {
@@ -4455,6 +4469,7 @@
 						starbaseCoords,
 						resMax
 					);
+                    cLog(1,`${FleetTimeStamp(userFleets[i].label)} Loaded ${resp.amount} ${entry.res}: `, resp);
                     cargoSpace -= resp && resp.amount ? cargoItems.find(r => r.token == entry.res).size * resp.amount : 0;
 
 					if (resp && resp.name == 'NotEnoughResource') {
@@ -4702,6 +4717,7 @@
     async function startCraft(userCraft) {
         if (!enableAssistant) return;
         try {
+            updateFleetState(userCraft, userCraft.state);
             let targetX = userCraft.coordinates.split(',')[0].trim();
             let targetY = userCraft.coordinates.split(',')[1].trim();
             let starbase = await getStarbaseFromCoords(targetX, targetY);
@@ -4731,6 +4747,7 @@
             // Get all completed crafting processes at the designated Starbase
             let completedCraftingProcesses = [];
             let completedUpgradeProcesses = [];
+            let craftingProcessRunning = false;
             for (let craftingInstance of craftingInstances) {
                 let craftingProcesses = await craftingProgram.account.craftingProcess.all([
                     {
@@ -4748,34 +4765,58 @@
                 ]);
 
                 for (let craftingProcess of craftingProcesses) {
+                    if (userCraft.craftingId && craftingProcess.account.craftingId.toNumber() == userCraft.craftingId) craftingProcessRunning = true;
                     if (craftRecipes.some(item => item.publicKey.toString() === craftingProcess.account.recipe.toString())) {
                         if (craftingProcess.account.endTime.toNumber() < craftTime.starbaseTime && [2,3].includes(craftingProcess.account.status)) {
-                            completedCraftingProcesses.push({craftingProcess: craftingProcess.publicKey, craftingInstance: craftingInstance.publicKey, recipe: craftingProcess.account.recipe, status: craftingProcess.account.status});
+                            completedCraftingProcesses.push({craftingProcess: craftingProcess.publicKey, craftingInstance: craftingInstance.publicKey, recipe: craftingProcess.account.recipe, status: craftingProcess.account.status, craftingId: craftingProcess.account.craftingId.toNumber()});
                         }
                     } else {
                         if (craftingProcess.account.endTime.toNumber() < upgradeTime.starbaseTime && [2,3].includes(craftingProcess.account.status)) {
-                            completedUpgradeProcesses.push({craftingProcess: craftingProcess.publicKey, craftingInstance: craftingInstance.publicKey, recipe: craftingProcess.account.recipe, status: craftingProcess.account.status});
+                            completedUpgradeProcesses.push({craftingProcess: craftingProcess.publicKey, craftingInstance: craftingInstance.publicKey, recipe: craftingProcess.account.recipe, status: craftingProcess.account.status, craftingId: craftingProcess.account.craftingId.toNumber()});
                         }
                     }
                 }
+            }
+
+            if (!craftingProcessRunning) {
+                cLog(1,`${FleetTimeStamp(userCraft.label)} Crafting process not found. Setting state to Idle.`);
+                updateFleetState(userCraft, 'Idle');
+                userCraft.craftingId = 0;
+                await GM.setValue(userCraft.label, JSON.stringify(userCraft));
             }
 
             let starbasePlayerCargoHoldsAndTokens = await getStarbasePlayerCargoHolds(starbasePlayer);
 
             for (let craftingProcess of completedCraftingProcesses) {
                 let craftRecipe = craftRecipes.find(item => item.publicKey.toString() === craftingProcess.recipe.toString());
-                cLog(1,`${FleetTimeStamp(userCraft.label)} Completing craft at [${targetX}, ${targetY}] for  ${craftRecipe.output.mint.toString()}`);
-                updateFleetState(userCraft, 'Craft Completing');
-                await execCompleteCrafting(starbase, starbasePlayer, starbasePlayerCargoHoldsAndTokens, craftingProcess, userCraft);
-                if (!userCraft.state.includes('ERROR')) await GM.setValue(userCraft.label, JSON.stringify(userCraft));
+                if (userCraft.craftingId && craftingProcess.craftingId == userCraft.craftingId) {
+                    cLog(1,`${FleetTimeStamp(userCraft.label)} Completing craft at [${targetX}, ${targetY}] for  ${craftRecipe.output.mint.toString()}`);
+                    updateFleetState(userCraft, 'Craft Completing');
+                    await execCompleteCrafting(starbase, starbasePlayer, starbasePlayerCargoHoldsAndTokens, craftingProcess, userCraft);
+                    if (!userCraft.state.includes('ERROR')) {
+                        if (userCraft.craftingId && craftingProcess.craftingId == userCraft.craftingId) {
+                            updateFleetState(userCraft, 'Idle');
+                            userCraft.craftingId = 0;
+                            await GM.setValue(userCraft.label, JSON.stringify(userCraft));
+                        }
+                    }
+                }
             }
 
             for (let upgradeProcess of completedUpgradeProcesses) {
                 let craftingRecipe = upgradeRecipes.find(item => item.publicKey.toString() === upgradeProcess.recipe.toString());
-                cLog(1,`${FleetTimeStamp(userCraft.label)} Completing upgrade at [${targetX}, ${targetY}] for  ${craftingRecipe.input[0].mint.toString()}`);
-                updateFleetState(userCraft, 'Upgrade Completing');
-                await execCompleteUpgrade(starbase, starbasePlayer, starbasePlayerCargoHoldsAndTokens, upgradeProcess, userCraft);
-                if (!userCraft.state.includes('ERROR')) await GM.setValue(userCraft.label, JSON.stringify(userCraft));
+                if (userCraft.craftingId && upgradeProcess.craftingId == userCraft.craftingId) {
+                    cLog(1,`${FleetTimeStamp(userCraft.label)} Completing upgrade at [${targetX}, ${targetY}] for  ${craftingRecipe.input[0].mint.toString()}`);
+                    updateFleetState(userCraft, 'Upgrade Completing');
+                    await execCompleteUpgrade(starbase, starbasePlayer, starbasePlayerCargoHoldsAndTokens, upgradeProcess, userCraft);
+                    if (!userCraft.state.includes('ERROR')) {
+                        if (userCraft.craftingId && upgradeProcess.craftingId == userCraft.craftingId) {
+                            updateFleetState(userCraft, 'Idle');
+                            userCraft.craftingId = 0;
+                            await GM.setValue(userCraft.label, JSON.stringify(userCraft));
+                        }
+                    }
+                }
             }
 
             let starbasePlayerInfo = await sageProgram.account.starbasePlayer.fetch(starbasePlayer);
@@ -4796,8 +4837,14 @@
                 let craftAmount = Math.min(targetRecipe.craftAmount, targetRecipe.amountCraftable);
                 cLog(1,`${FleetTimeStamp(userCraft.label)} Starting craft at [${targetX}, ${targetY}] for ${targetRecipe.craftRecipe.name}`);
                 updateFleetState(userCraft, 'Craft Starting');
-                await execStartCrafting(starbase, starbasePlayer, starbasePlayerCargoHoldsAndTokens, targetRecipe.craftRecipe, craftAmount, userCraft);
-                if (!userCraft.state.includes('ERROR')) await GM.setValue(userCraft.label, JSON.stringify(userCraft));
+                let result = await execStartCrafting(starbase, starbasePlayer, starbasePlayerCargoHoldsAndTokens, targetRecipe.craftRecipe, craftAmount, userCraft);
+                if (!userCraft.state.includes('ERROR')) {
+                    let craftDuration = (targetRecipe.craftRecipe.duration * craftAmount) / userCraft.crew;
+                    let calcEndTime = Date.now() + craftDuration * 1000;
+                    updateFleetState(userCraft, 'Crafting [' + TimeToStr(new Date(calcEndTime)) + ']');
+                    userCraft.craftingId = result.craftingId;
+                    await GM.setValue(userCraft.label, JSON.stringify(userCraft));
+                }
             }
         }
         catch(error) {
